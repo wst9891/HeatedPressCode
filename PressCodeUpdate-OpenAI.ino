@@ -28,6 +28,7 @@ enum Option {
   F_COOLING_HEIGHT,
   COOL_TIME,
   COOL_TARGET_TEMP,
+  PRESSURE_CALIBRATION,
   P_PRESSURE_TARGET,
   F_PRESSURE_TARGET,
   PRESSURE_RANGE,
@@ -70,6 +71,7 @@ int pressureRange = 0.5;
 int PressureTarget = 3;
 int CoolHeight = 130;
 int coolingStarted = 0;
+int PressureCalibration = 70; // this is units of 1/10 of 1 inch squared
 
 // Heater Control Parameters
 const int heaterPunchPin = 3;
@@ -112,7 +114,7 @@ unsigned long coolingStartTime = 0;
 unsigned long buzzerStartTime = 0;
 unsigned long holdHeatStartTime = 0;
 
-
+//setup and loop
 void setup() {
   // Initialize LCD Shield
   lcd.begin(LCD_COLS, LCD_ROWS);
@@ -153,6 +155,8 @@ void loop() {
   
 }
 
+
+//Home screen
 void handleHomeScreen() {
   if (lcd.readButtons() & UP_BUTTON) {
     currentState = PROGRAM_SELECTION;
@@ -160,36 +164,7 @@ void handleHomeScreen() {
   }
 }
 
-void displayHomePage() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.write(0); // Home icon
-  lcd.setCursor(0, 1);
-  lcd.print("TT:");
-  lcd.print(paddedValue(pTargetTemperature, 2));
-  lcd.print(" CH:");
-  lcd.print(paddedValue(pCoolHeight, 2));
-  lcd.setCursor(7, 1);
-  lcd.print("D:");
-  lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
-  lcd.print(" P:");
-  lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
-  lcd.print(" H:");
-  lcd.print(paddedValue(readHeight(), 3));
-  lcd.print("  F:");
-  lcd.print(paddedValue(readPressure(), 2));
-}
-
-void displayProgramSelection() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Select Program:");
-
-  lcd.setCursor(0, 1);
-  lcd.print("Plastic Program");
-}
-
-
+//Plastic Program
 void handlePlasticProgram() {
   // Check if both zones reached target temperature
   if (readTemperature(PUNCH_ZONE) >= pTargetTemperature && readTemperature(DIE_ZONE) >= pTargetTemperature) {
@@ -244,25 +219,7 @@ void handlePlasticProgram() {
   }
 }
 
-
-void displayProgramStatus(String progName) {
-  lcd.setCursor(0, 0);
-  lcd.print(progName);
-  lcd.print("TT:");
-  lcd.print(paddedValue(pTargetTemperature, 2));
-  lcd.print(" CH:");
-  lcd.print(paddedValue(pCoolHeight, 2));
-  lcd.setCursor(0, 1);
-  lcd.print("D:");
-  lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
-  lcd.print(" P:");
-  lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
-  lcd.print(" H:");
-  lcd.print(paddedValue(readHeight(), 3));
-  lcd.print("  F:");
-  lcd.print(paddedValue(readPressure(), 2));
-}
-
+//Fabric Program
 void handleFabricProgram() {
   // Check if both zones reached target temperature
   if (readTemperature(PUNCH_ZONE) >= fTargetTemperature && readTemperature(DIE_ZONE) >= fTargetTemperature) {
@@ -309,6 +266,7 @@ void handleFabricProgram() {
   }
 }
 
+//Plastic Pressing
 void handlePlasticPressingProgram() {
   // Check if pressure is within the target range
   if (readPressure() >= (pPressureTarget + pressureRange)) {
@@ -368,6 +326,7 @@ void handlePlasticPressingProgram() {
   }
 }
 
+//Fabric Pressing
 void handleFabricPressingProgram() {
   // Check if pressure is within the target range
   if (readPressure() >= (fPressureTarget + pressureRange)) {
@@ -427,52 +386,73 @@ void handleFabricPressingProgram() {
   }
 }
 
+//Adjust Settings 
+void handleSettingsScreen() {
+  static Option selectedOption = P_TARGET_TEMP;  // Currently selected option
 
-void displayPressingProgram() {
+  displaySettingsPage(selectedOption);
+
+  while (true) {
+    int button = readButtons();  // Read the button state as an integer
+
+    if (button == BUTTON_UP) {
+      selectedOption = static_cast<Option>((selectedOption + 1) % NUM_OPTIONS);
+      displaySettingsPage(selectedOption);
+    } else if (button == BUTTON_DOWN) {
+      selectedOption = static_cast<Option>((selectedOption + NUM_OPTIONS - 1) % NUM_OPTIONS);
+      displaySettingsPage(selectedOption);
+    } else if (button == BUTTON_LEFT) {
+      adjustOptionValue(selectedOption, false);  // Decrease the value
+      displayAdjustingMode(selectedOption);
+    } else if (button == BUTTON_RIGHT) {
+      adjustOptionValue(selectedOption, true);  // Increase the value
+      displayAdjustingMode(selectedOption);
+    } else if (button == BUTTON_SELECT) {
+      saveSettings();  // Save the updated settings to the SD card
+      delay(2000);
+      break;
+    }
+  }
+}
+
+//Select a program screen
+void handleProgramSelection() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Pressing Program");
-  lcd.setCursor(0, 1);
-  lcd.print("Press to continue");
+  lcd.print("Select Program:");
+
+  int programSelection = 0; // 0 for plastic program, 1 for fabric program
+
+  while (true) {
+    lcd.setCursor(0, 1);
+
+    if (programSelection == 0) {
+      lcd.print("Plastic Program");
+    } else {
+      lcd.print("Fabric Program ");
+    }
+
+    int button = readButtons();
+
+    if (button == BUTTON_UP) {
+      programSelection = 1 - programSelection; // Toggle program selection
+    } else if (button == BUTTON_DOWN) {
+      programSelection = 1 - programSelection; // Toggle program selection
+    } else if (button == BUTTON_RIGHT) {
+      if (programSelection == 0) {
+        currentState = PLASTIC_PROGRAM;
+      } else {
+        currentState = FABRIC_PROGRAM;
+      }
+      break; // Exit the program selection loop
+    }
+  }
 }
 
-void displayFabricPressingProgramStatus() {
-  lcd.setCursor(0, 0);
-  lcd.print("Press TT");
-  lcd.print(paddedValue(fTargetTemperature, 2));
-  lcd.print(" CH");
-  lcd.print(paddedValue(fCoolHeight, 2));
+//#########################
+// Special Functions
 
-  lcd.setCursor(0, 1);
-  lcd.print("D:");
-  lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
-  lcd.print(" P:");
-  lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
-  lcd.print(" H:");
-  lcd.print(paddedValue(readHeight(), 3));
-  lcd.print("  F:");
-  lcd.print(paddedValue(readPressure(), 2));
-}
-
-void displayPlasticPressingProgramStatus() {
-  lcd.setCursor(0, 0);
-  lcd.print("Press TT");
-  lcd.print(paddedValue(pTargetTemperature, 2));
-  lcd.print(" CH");
-  lcd.print(paddedValue(pCoolHeight, 2));
-
-  lcd.setCursor(0, 1);
-  lcd.print("D:");
-  lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
-  lcd.print(" P:");
-  lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
-  lcd.print(" H:");
-  lcd.print(paddedValue(readHeight(), 3));
-  lcd.print("  F:");
-  lcd.print(paddedValue(readPressure(), 2));
-}
-
-
+//Heater Control with duty cycles
 void controlHeater(Zone zone) {
   unsigned long currentMillis = millis();
 
@@ -514,6 +494,7 @@ void controlHeater(Zone zone) {
   }
 }
 
+//Load the Settings saved to SD card
 void loadSettings() {
   // Open the settings file on the SD card
   File settingsFile = SD.open("settings.txt");
@@ -568,100 +549,7 @@ void loadSettings() {
   }
 }
 
-
-void handleSettingsScreen() {
-  static Option selectedOption = P_TARGET_TEMP;  // Currently selected option
-
-  displaySettingsPage(selectedOption);
-
-  while (true) {
-    int button = readButtons();  // Read the button state as an integer
-
-    if (button == BUTTON_UP) {
-      selectedOption = static_cast<Option>((selectedOption + 1) % NUM_OPTIONS);
-      displaySettingsPage(selectedOption);
-    } else if (button == BUTTON_DOWN) {
-      selectedOption = static_cast<Option>((selectedOption + NUM_OPTIONS - 1) % NUM_OPTIONS);
-      displaySettingsPage(selectedOption);
-    } else if (button == BUTTON_LEFT) {
-      adjustOptionValue(selectedOption, false);  // Decrease the value
-      displayAdjustingMode(selectedOption);
-    } else if (button == BUTTON_RIGHT) {
-      adjustOptionValue(selectedOption, true);  // Increase the value
-      displayAdjustingMode(selectedOption);
-    } else if (button == BUTTON_SELECT) {
-      saveSettings();  // Save the updated settings to the SD card
-      delay(2000);
-      break;
-    }
-  }
-}
-
-void displayAdjustingMode(Option option) {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Adjusting Mode");
-  lcd.setCursor(0, 1);
-
-  switch (option) {
-    case P_TARGET_TEMP:
-      lcd.print("P Target Temp: ");
-      lcd.print(pTargetTemperature);
-      lcd.print(" ");
-      break;
-    case F_TARGET_TEMP:
-      lcd.print("F Target Temp: ");
-      lcd.print(fTargetTemperature);
-      lcd.print(" ");
-      break;
-    case F_HEAT_TIME:
-      lcd.print("F Heat Time: ");
-      lcd.print(fHeatTime);
-      lcd.print(" ");
-      break;
-    case HEIGHT_CALIBRATION:
-      lcd.print("Height Calib.: ");
-      lcd.print(heightCalibration);
-      lcd.print(" ");
-      break;
-    case P_COOLING_HEIGHT:
-      lcd.print("P Cool Height: ");
-      lcd.print(pCoolHeight);
-      lcd.print(" ");
-      break;
-    case F_COOLING_HEIGHT:
-      lcd.print("F Cool Height: ");
-      lcd.print(fCoolHeight);
-      lcd.print(" ");
-      break;
-    case COOL_TIME:
-      lcd.print("Cool Time: ");
-      lcd.print(CoolTime);
-      lcd.print(" ");
-      break;
-    case COOL_TARGET_TEMP:
-      lcd.print("Cool Target: ");
-      lcd.print(coolTargetTemp);
-      lcd.print(" ");
-      break;
-    case P_PRESSURE_TARGET:
-      lcd.print("P Pressure: ");
-      lcd.print(pPressureTarget);
-      lcd.print(" ");
-      break;
-    case F_PRESSURE_TARGET:
-      lcd.print("F Pressure: ");
-      lcd.print(fPressureTarget);
-      lcd.print(" ");
-      break;
-    case PRESSURE_RANGE:
-      lcd.print("Pressure Range: ");
-      lcd.print(pressureRange);
-      lcd.print(" ");
-      break;
-  }
-}
-
+//Special funciton for adjusting the value of Setting variable
 
 void adjustOptionValue(Option option, bool increase) {
   switch (option) {
@@ -745,9 +633,277 @@ void adjustOptionValue(Option option, bool increase) {
   }
 }
 
+//Save current Settings to the SD card
+void saveSettings() {
+  // Open the settings file in write mode
+  File settingsFile = SD.open(settingsFilePath, FILE_WRITE);
+
+  if (settingsFile) {
+    // Write the settings values to the file in the correct format
+    settingsFile.println("P_TARGET_TEMP=" + String(pTargetTemperature));
+    settingsFile.println("F_TARGET_TEMP=" + String(fTargetTemperature));
+    settingsFile.println("F_HEAT_TIME=" + String(fHeatTime));
+    settingsFile.println("HEIGHT_CALIBRATION=" + String(heightCalibration));
+    settingsFile.println("P_COOLING_HEIGHT=" + String(pCoolHeight));
+    settingsFile.println("F_COOLING_HEIGHT=" + String(fCoolHeight));
+    settingsFile.println("P_COOL_TIME=" + String(CoolTime));
+    settingsFile.println("COOL_TARGET_TEMP=" + String(coolTargetTemp));
+    settingsFile.println("P_PRESSURE_TARGET=" + String(pPressureTarget));
+    settingsFile.println("F_PRESSURE_TARGET=" + String(fPressureTarget));
+    settingsFile.println("PRESSURE_RANGE=" + String(pressureRange));
+
+    // Close the settings file
+    settingsFile.close();
+  } else {
+    // Failed to open the settings file
+    Serial.println("Failed to open the settings file for writing");
+  }
+}
+
+//Cancel current program and return to home
+void cancelProgram() {
+  // Turn off all components
+  digitalWrite(heaterPunchPin, LOW);
+  digitalWrite(heaterDiePin, LOW);
+  digitalWrite(pressPumpPin, LOW);
+  digitalWrite(coolingPumpPin, LOW);
+  digitalWrite(buzzerPin, LOW);
+  coolingStarted = 0;
+
+  // Reset variables and state
+  currentState = HOME_SCREEN;
+  displayHomeScreen();
+}
+
+//Return padded values for ints with a given width
+String paddedValue(int value, int width) {
+  String padded = String(value);
+  while (padded.length() < width) {
+    padded = " " + padded;
+  }
+  return padded;
+}
+
+//Read the temperature of a given sensor pin
+float readTemperature(int sensorPin) {
+  int rawValue = analogRead(sensorPin);
+
+  // Convert the raw ADC value to resistance
+  float resistance = 10000.0 / (1023.0 / rawValue - 1.0);
+
+  // Calculate the temperature using the Steinhart-Hart equation
+  float temperature = 1.0 / (log(resistance / 10000.0) / 3976.0 + 1.0 / 298.15) - 273.15;
+
+  return temperature;
+}
+
+//Read height of the linear potentiometer with calibration removed
+float readHeight() {
+
+  float val;
 
 
-  void displaySettingsPage(Option selectedOption) {
+  val =  (analogRead(heightSensorPin) - heightCalibration) / 19.3018868;
+
+  return float(round(val * 5))*2;
+
+}
+
+//Read pressure transducer value and convert to tenth of 1 ton force
+float readPressure() {
+  float voltage = analogRead(pressurePin) * (5.0 / 1023.0);  // Convert ADC reading to voltage (assuming 5V reference)
+  float pressure = voltage * 10000.0*10.0/PressureCalibration;  // Convert voltage to pressure in PSI (assuming 10V corresponds to 10,000 PSI then divide by the calibration constant
+
+  return pressure;
+}
+
+//Read which button is being pressed
+int readButtons() {
+  int buttons = 0;
+  
+  // Read the state of the buttons
+  if (lcd.readButtons() & BUTTON_UP)
+    buttons |= UP_BUTTON;
+  if (lcd.readButtons() & BUTTON_DOWN)
+    buttons |= DOWN_BUTTON;
+  if (lcd.readButtons() & BUTTON_LEFT)
+    buttons |= LEFT_BUTTON;
+  if (lcd.readButtons() & BUTTON_RIGHT)
+    buttons |= RIGHT_BUTTON;
+  if (lcd.readButtons() & BUTTON_SELECT)
+    buttons |= SELECT_BUTTON;
+  
+  return buttons;
+}
+
+// All the different display screen functions below this point
+//home
+void displayHomeScreen() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Home ");
+  lcd.write(0); // Home icon
+  lcd.setCursor(0, 1);
+  // lcd.print("TT:");
+  // lcd.print(paddedValue(targetTemperature));
+  // lcd.print(" CH:");
+  // lcd.print(paddedValue(coolHeight));
+  // lcd.setCursor(7, 1);
+  lcd.print("D:");
+  lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
+  lcd.print(" P:");
+  lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
+  lcd.print(" H:");
+  lcd.print(paddedValue(readHeight(), 3));
+  lcd.print("  F:");
+  lcd.print(paddedValue(readPressure(), 2));
+}
+
+//Program Selection
+void displayProgramSelection() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Select Program:");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Plastic Program");
+}
+
+
+void displayProgramStatus(String progName) {
+  lcd.setCursor(0, 0);
+  lcd.print(progName);
+  lcd.print("TT:");
+  lcd.print(paddedValue(pTargetTemperature, 2));
+  lcd.print(" CH:");
+  lcd.print(paddedValue(pCoolHeight, 2));
+  lcd.setCursor(0, 1);
+  lcd.print("D:");
+  lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
+  lcd.print(" P:");
+  lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
+  lcd.print(" H:");
+  lcd.print(paddedValue(readHeight(), 3));
+  lcd.print("  F:");
+  lcd.print(paddedValue(readPressure(), 2));
+}
+
+
+void displayPressingProgram() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Pressing Program");
+  lcd.setCursor(0, 1);
+  lcd.print("Press to continue");
+}
+
+
+void displayFabricPressingProgramStatus() {
+  lcd.setCursor(0, 0);
+  lcd.print("Press TT");
+  lcd.print(paddedValue(fTargetTemperature, 2));
+  lcd.print(" CH");
+  lcd.print(paddedValue(fCoolHeight, 2));
+
+  lcd.setCursor(0, 1);
+  lcd.print("D:");
+  lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
+  lcd.print(" P:");
+  lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
+  lcd.print(" H:");
+  lcd.print(paddedValue(readHeight(), 3));
+  lcd.print("  F:");
+  lcd.print(paddedValue(readPressure(), 2));
+}
+
+
+
+void displayPlasticPressingProgramStatus() {
+  lcd.setCursor(0, 0);
+  lcd.print("Press TT");
+  lcd.print(paddedValue(pTargetTemperature, 2));
+  lcd.print(" CH");
+  lcd.print(paddedValue(pCoolHeight, 2));
+
+  lcd.setCursor(0, 1);
+  lcd.print("D:");
+  lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
+  lcd.print(" P:");
+  lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
+  lcd.print(" H:");
+  lcd.print(paddedValue(readHeight(), 3));
+  lcd.print("  F:");
+  lcd.print(paddedValue(readPressure(), 2));
+}
+
+
+void displayAdjustingMode(Option option) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Adjusting Mode");
+  lcd.setCursor(0, 1);
+
+  switch (option) {
+    case P_TARGET_TEMP:
+      lcd.print("P Target Temp: ");
+      lcd.print(pTargetTemperature);
+      lcd.print(" ");
+      break;
+    case F_TARGET_TEMP:
+      lcd.print("F Target Temp: ");
+      lcd.print(fTargetTemperature);
+      lcd.print(" ");
+      break;
+    case F_HEAT_TIME:
+      lcd.print("F Heat Time: ");
+      lcd.print(fHeatTime);
+      lcd.print(" ");
+      break;
+    case HEIGHT_CALIBRATION:
+      lcd.print("Height Calib.: ");
+      lcd.print(heightCalibration);
+      lcd.print(" ");
+      break;
+    case P_COOLING_HEIGHT:
+      lcd.print("P Cool Height: ");
+      lcd.print(pCoolHeight);
+      lcd.print(" ");
+      break;
+    case F_COOLING_HEIGHT:
+      lcd.print("F Cool Height: ");
+      lcd.print(fCoolHeight);
+      lcd.print(" ");
+      break;
+    case COOL_TIME:
+      lcd.print("Cool Time: ");
+      lcd.print(CoolTime);
+      lcd.print(" ");
+      break;
+    case COOL_TARGET_TEMP:
+      lcd.print("Cool Target: ");
+      lcd.print(coolTargetTemp);
+      lcd.print(" ");
+      break;
+    case P_PRESSURE_TARGET:
+      lcd.print("P Pressure: ");
+      lcd.print(pPressureTarget);
+      lcd.print(" ");
+      break;
+    case F_PRESSURE_TARGET:
+      lcd.print("F Pressure: ");
+      lcd.print(fPressureTarget);
+      lcd.print(" ");
+      break;
+    case PRESSURE_RANGE:
+      lcd.print("Pressure Range: ");
+      lcd.print(pressureRange);
+      lcd.print(" ");
+      break;
+  }
+}
+
+
+void displaySettingsPage(Option selectedOption) {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Settings");
@@ -807,6 +963,13 @@ void adjustOptionValue(Option option, bool increase) {
       break;
     case PRESSURE_RANGE:
       lcd.print("> Pressure Range:");
+      lcd.setCursor(0, 2);
+      lcd.print("  Pressure Calibration:");
+      break;
+      case PRESSURE_CALIBRATION:
+      lcd.print(" Pressure Range:");
+      lcd.setCursor(0, 2);
+      lcd.print(">  Pressure Calibration:");
       break;
   }
 
@@ -816,166 +979,3 @@ void adjustOptionValue(Option option, bool increase) {
   // lcd.print("Press L/R to adjust");
 }
 
-
-
-void saveSettings() {
-  // Open the settings file in write mode
-  File settingsFile = SD.open(settingsFilePath, FILE_WRITE);
-
-  if (settingsFile) {
-    // Write the settings values to the file in the correct format
-    settingsFile.println("P_TARGET_TEMP=" + String(pTargetTemperature));
-    settingsFile.println("F_TARGET_TEMP=" + String(fTargetTemperature));
-    settingsFile.println("F_HEAT_TIME=" + String(fHeatTime));
-    settingsFile.println("HEIGHT_CALIBRATION=" + String(heightCalibration));
-    settingsFile.println("P_COOLING_HEIGHT=" + String(pCoolHeight));
-    settingsFile.println("F_COOLING_HEIGHT=" + String(fCoolHeight));
-    settingsFile.println("P_COOL_TIME=" + String(CoolTime));
-    settingsFile.println("COOL_TARGET_TEMP=" + String(coolTargetTemp));
-    settingsFile.println("P_PRESSURE_TARGET=" + String(pPressureTarget));
-    settingsFile.println("F_PRESSURE_TARGET=" + String(fPressureTarget));
-    settingsFile.println("PRESSURE_RANGE=" + String(pressureRange));
-
-    // Close the settings file
-    settingsFile.close();
-  } else {
-    // Failed to open the settings file
-    Serial.println("Failed to open the settings file for writing");
-  }
-}
-
-
-
-
-void handleProgramSelection() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Select Program:");
-
-  int programSelection = 0; // 0 for plastic program, 1 for fabric program
-
-  while (true) {
-    lcd.setCursor(0, 1);
-
-    if (programSelection == 0) {
-      lcd.print("Plastic Program");
-    } else {
-      lcd.print("Fabric Program ");
-    }
-
-    int button = readButtons();
-
-    if (button == BUTTON_UP) {
-      programSelection = 1 - programSelection; // Toggle program selection
-    } else if (button == BUTTON_DOWN) {
-      programSelection = 1 - programSelection; // Toggle program selection
-    } else if (button == BUTTON_RIGHT) {
-      if (programSelection == 0) {
-        currentState = PLASTIC_PROGRAM;
-      } else {
-        currentState = FABRIC_PROGRAM;
-      }
-      break; // Exit the program selection loop
-    }
-  }
-}
-
-
-
-
-
-
-
-void cancelProgram() {
-  // Turn off all components
-  digitalWrite(heaterPunchPin, LOW);
-  digitalWrite(heaterDiePin, LOW);
-  digitalWrite(pressPumpPin, LOW);
-  digitalWrite(coolingPumpPin, LOW);
-  digitalWrite(buzzerPin, LOW);
-  coolingStarted = 0;
-
-  // Reset variables and state
-  currentState = HOME_SCREEN;
-  displayHomeScreen();
-}
-
-String paddedValue(int value, int width) {
-  String padded = String(value);
-  while (padded.length() < width) {
-    padded = " " + padded;
-  }
-  return padded;
-}
-
-
-float readTemperature(int sensorPin) {
-  int rawValue = analogRead(sensorPin);
-
-  // Convert the raw ADC value to resistance
-  float resistance = 10000.0 / (1023.0 / rawValue - 1.0);
-
-  // Calculate the temperature using the Steinhart-Hart equation
-  float temperature = 1.0 / (log(resistance / 10000.0) / 3976.0 + 1.0 / 298.15) - 273.15;
-
-  return temperature;
-}
-
-float readHeight() {
-
-  float val;
-
-
-  val =  (analogRead(heightSensorPin) - heightCalibration) / 19.3018868;
-
-  return float(round(val * 5))*2;
-
-}
-
-float readPressure() {
-  float voltage = analogRead(pressurePin) * (5.0 / 1023.0);  // Convert ADC reading to voltage (assuming 5V reference)
-  float pressure = voltage * 10000.0;  // Convert voltage to pressure in PSI (assuming 10V corresponds to 10,000 PSI)
-
-  return pressure;
-}
-
-
-
-int readButtons() {
-  int buttons = 0;
-  
-  // Read the state of the buttons
-  if (lcd.readButtons() & BUTTON_UP)
-    buttons |= UP_BUTTON;
-  if (lcd.readButtons() & BUTTON_DOWN)
-    buttons |= DOWN_BUTTON;
-  if (lcd.readButtons() & BUTTON_LEFT)
-    buttons |= LEFT_BUTTON;
-  if (lcd.readButtons() & BUTTON_RIGHT)
-    buttons |= RIGHT_BUTTON;
-  if (lcd.readButtons() & BUTTON_SELECT)
-    buttons |= SELECT_BUTTON;
-  
-  return buttons;
-}
-
-void displayHomeScreen() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Home ");
-  lcd.write(0); // Home icon
-  lcd.setCursor(0, 1);
-  // lcd.print("TT:");
-  // lcd.print(paddedValue(targetTemperature));
-  // lcd.print(" CH:");
-  // lcd.print(paddedValue(coolHeight));
-  // lcd.setCursor(7, 1);
-  lcd.print("D:");
-  lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
-  lcd.print(" P:");
-  lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
-  lcd.print(" H:");
-  lcd.print(paddedValue(readHeight(), 3));
-  lcd.print("  F:");
-  lcd.print(paddedValue(readPressure(), 2));
-}
