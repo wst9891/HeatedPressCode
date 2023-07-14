@@ -28,10 +28,10 @@ enum Option {
   F_COOLING_HEIGHT,
   COOL_TIME,
   COOL_TARGET_TEMP,
-  PRESSURE_CALIBRATION,
   P_PRESSURE_TARGET,
   F_PRESSURE_TARGET,
   PRESSURE_RANGE,
+  PRESSURE_CALIBRATION,
   NUM_OPTIONS
 };
 
@@ -65,10 +65,10 @@ int pCoolHeight = 130;
 int fCoolHeight = 30;
 int CoolTime = 5;
 int coolTargetTemp = 15;
-int pPressureTarget = 7;
-int fPressureTarget = 3;
-int pressureRange = 0.5;
-int PressureTarget = 3;
+int pPressureTarget = 70;
+int fPressureTarget = 30;
+int pressureRange = 5;
+int PressureTarget = 30;
 int CoolHeight = 130;
 int coolingStarted = 0;
 int PressureCalibration = 70; // this is units of 1/10 of 1 inch squared
@@ -85,6 +85,44 @@ const unsigned long heatingDelay75 = 3000;   // 3 seconds
 const unsigned long heatingDelay50 = 5000;   // 5 seconds
 const unsigned long coolingDelay = 1000;     // 1 second
 const unsigned long buzzerDuration = 3000;   // 3 seconds
+const unsigned long ButtonPressDelay = 100;
+
+// Make a custome Home Icon
+byte homeIcon1[8] = {
+  B00001,
+  B00011,
+  B00111,
+  B01111,
+  B11111,
+  B11110,
+  B11110,
+  B11110
+};
+
+byte homeIcon2[8] = {
+  B10011,
+  B11011,
+  B11111,
+  B11111,
+  B11111,
+  B01111,
+  B01111,
+  B01111
+};
+
+byte UpDownIcon[8] = {
+  B00100,
+  B01010,
+  B10001,
+  B00000,
+  B00000,
+  B10001,
+  B01010,
+  B00100
+};
+
+
+
 
 // Heating States
 enum HeatingState {
@@ -132,8 +170,12 @@ void setup() {
   // Load settings from SD Card
   loadSettings();
 
+  lcd.createChar(0, homeIcon1);
+  lcd.createChar(1, homeIcon2);
+  lcd.createChar(2, UpDownIcon);
+
   // Display Home Screen
-  displayHomePage();
+  displayHomeScreen();
 }
 
 void loop() {
@@ -158,9 +200,24 @@ void loop() {
 
 //Home screen
 void handleHomeScreen() {
-  if (lcd.readButtons() & UP_BUTTON) {
+  int buttons = readButtons();
+  if (buttons == UP_BUTTON) {
     currentState = PROGRAM_SELECTION;
+    delay(ButtonPressDelay);
     displayProgramSelection();
+  }
+
+  if (buttons == SELECT_BUTTON) {
+    currentState = SETTINGS_SCREEN;
+    delay(ButtonPressDelay);
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Setting ");
+    lcd.write((uint8_t)2);
+    lcd.print(" Scroll");
+    lcd.setCursor(0,1);
+    lcd.print("<> Adjust");
+    delay(2000);
   }
 }
 
@@ -190,7 +247,7 @@ void handlePlasticProgram() {
       // Set the target pressure and cool height
       PressureTarget = pPressureTarget;
       CoolHeight = pCoolHeight;
-      displayPressingProgram();
+      displayProgramStatus("PlPr");
       return;
     }
   }
@@ -206,7 +263,7 @@ void handlePlasticProgram() {
   }
 
   // Display Plastic Program status
-  displayProgramStatus("Plas");
+  displayProgramStatus("PlHe");
 
   // Check if left button is pressed to cancel the program
 
@@ -214,9 +271,26 @@ void handlePlasticProgram() {
   int buttons = readButtons();
 
   // Scroll through the options
-  if (buttons & LEFT_BUTTON) {
+  if (buttons == LEFT_BUTTON) {
     cancelProgram();
   }
+
+  // EXTRA CODE FOR EASY TESTING REMOVE AFTER TESTING
+  //###################
+  if (buttons == RIGHT_BUTTON) {
+    // Turn off buzzer
+    digitalWrite(buzzerPin, LOW);
+
+    // Proceed to Pressing program
+    currentState = PLASTIC_PRESSING_PROGRAM;
+
+    // Set the target pressure and cool height
+    PressureTarget = pPressureTarget;
+    CoolHeight = pCoolHeight;
+    displayProgramStatus("PlPr");
+    return;
+  }
+  //######################
 }
 
 //Fabric Program
@@ -237,7 +311,7 @@ void handleFabricProgram() {
 
       // Proceed to Pressing program
       currentState = FABRIC_PRESSING_PROGRAM;
-      displayPressingProgram();
+      displayProgramStatus("FaPr");
       return;
     }
   }
@@ -253,7 +327,7 @@ void handleFabricProgram() {
   }
 
   // Display Fabric Program status
-  displayProgramStatus("Fabr");
+  displayProgramStatus("FrHe");
 
   // Check if left button is pressed to cancel the program
 
@@ -261,8 +335,9 @@ void handleFabricProgram() {
   int buttons = readButtons();
 
   // Scroll through the options
-  if (buttons & LEFT_BUTTON) {
+  if (buttons == LEFT_BUTTON) {
     cancelProgram();
+    delay(ButtonPressDelay);
   }
 }
 
@@ -313,7 +388,7 @@ void handlePlasticPressingProgram() {
   }
 
   // Display Pressing Program status
-  displayPlasticPressingProgramStatus();
+  displayProgramStatus("PlPr");
 
   // Check if left button is pressed to cancel the program
 
@@ -321,7 +396,7 @@ void handlePlasticPressingProgram() {
   int buttons = readButtons();
 
   // Scroll through the options
-  if (buttons & LEFT_BUTTON) {
+  if (buttons == LEFT_BUTTON) {
     cancelProgram();
   }
 }
@@ -373,7 +448,7 @@ void handleFabricPressingProgram() {
   }
 
   // Display Pressing Program status
-  displayFabricPressingProgramStatus();
+  displayProgramStatus("FaPr");
 
   // Check if left button is pressed to cancel the program
 
@@ -381,7 +456,7 @@ void handleFabricPressingProgram() {
   int buttons = readButtons();
 
   // Scroll through the options
-  if (buttons & LEFT_BUTTON) {
+  if (buttons == LEFT_BUTTON) {
     cancelProgram();
   }
 }
@@ -395,21 +470,22 @@ void handleSettingsScreen() {
   while (true) {
     int button = readButtons();  // Read the button state as an integer
 
-    if (button == BUTTON_UP) {
-      selectedOption = static_cast<Option>((selectedOption + 1) % NUM_OPTIONS);
+    if (button == UP_BUTTON) {
+      selectedOption = static_cast<Option>((selectedOption - 1) % NUM_OPTIONS);
       displaySettingsPage(selectedOption);
-    } else if (button == BUTTON_DOWN) {
-      selectedOption = static_cast<Option>((selectedOption + NUM_OPTIONS - 1) % NUM_OPTIONS);
+    } else if (button == DOWN_BUTTON) {
+      selectedOption = static_cast<Option>((selectedOption + NUM_OPTIONS + 1) % NUM_OPTIONS);
       displaySettingsPage(selectedOption);
-    } else if (button == BUTTON_LEFT) {
+    } else if (button == LEFT_BUTTON) {
       adjustOptionValue(selectedOption, false);  // Decrease the value
       displayAdjustingMode(selectedOption);
-    } else if (button == BUTTON_RIGHT) {
+    } else if (button == RIGHT_BUTTON) {
       adjustOptionValue(selectedOption, true);  // Increase the value
       displayAdjustingMode(selectedOption);
-    } else if (button == BUTTON_SELECT) {
+    } else if (button == SELECT_BUTTON) {
       saveSettings();  // Save the updated settings to the SD card
-      delay(2000);
+      delay(ButtonPressDelay);
+      cancelProgram();
       break;
     }
   }
@@ -434,16 +510,19 @@ void handleProgramSelection() {
 
     int button = readButtons();
 
-    if (button == BUTTON_UP) {
+    if (button == UP_BUTTON) {
       programSelection = 1 - programSelection; // Toggle program selection
-    } else if (button == BUTTON_DOWN) {
+      delay(ButtonPressDelay);
+    } else if (button == DOWN_BUTTON) {
       programSelection = 1 - programSelection; // Toggle program selection
-    } else if (button == BUTTON_RIGHT) {
+      delay(ButtonPressDelay);
+    } else if (button == SELECT_BUTTON) {
       if (programSelection == 0) {
         currentState = PLASTIC_PROGRAM;
       } else {
         currentState = FABRIC_PROGRAM;
       }
+      delay(ButtonPressDelay);
       break; // Exit the program selection loop
     }
   }
@@ -545,12 +624,15 @@ void loadSettings() {
     // If the file doesn't exist or couldn't be opened, use default settings
     lcd.clear();
     lcd.setCursor(0,0);
-    lcd.print("SD Error, Default Settings Values Kept");
+    lcd.print("SD Error, Used"); 
+    lcd.setCursor(0,1);
+    lcd.print("Default Settings");
+    delay(2000);
   }
 }
 
 //Special funciton for adjusting the value of Setting variable
-
+//Gives the ability to adjust different values by different intervals
 void adjustOptionValue(Option option, bool increase) {
   switch (option) {
     case P_TARGET_TEMP:
@@ -576,9 +658,9 @@ void adjustOptionValue(Option option, bool increase) {
       break;
     case HEIGHT_CALIBRATION:
       if (increase) {
-        heightCalibration++;
+        heightCalibration += 10;
       } else {
-        heightCalibration--;
+        heightCalibration -= 10;
       }
       break;
     case P_COOLING_HEIGHT:
@@ -611,16 +693,16 @@ void adjustOptionValue(Option option, bool increase) {
       break;
     case P_PRESSURE_TARGET:
       if (increase) {
-        pPressureTarget += 1;
+        pPressureTarget += 5;
       } else {
-        pPressureTarget -= 1;
+        pPressureTarget -= 5;
       }
       break;
     case F_PRESSURE_TARGET:
       if (increase) {
-        fPressureTarget += 1;
+        fPressureTarget += 5;
       } else {
-        fPressureTarget -= 1;
+        fPressureTarget -= 5;
       }
       break;
     case PRESSURE_RANGE:
@@ -656,7 +738,12 @@ void saveSettings() {
     settingsFile.close();
   } else {
     // Failed to open the settings file
-    Serial.println("Failed to open the settings file for writing");
+    lcd.clear();
+    lcd.setCursor(0,0);
+    Serial.println("Failed to open");
+    lcd.print("Failed to open");
+    delay(2000);
+    
   }
 }
 
@@ -676,10 +763,20 @@ void cancelProgram() {
 }
 
 //Return padded values for ints with a given width
+//Left Justified
 String paddedValue(int value, int width) {
   String padded = String(value);
   while (padded.length() < width) {
-    padded = " " + padded;
+    padded = padded + " ";
+  }
+  return padded;
+}
+
+//Make Left Justified Strings
+String paddedString(String value, int width) {
+  String padded = String(value);
+  while (padded.length() < width) {
+    padded = padded + " ";
   }
   return padded;
 }
@@ -741,21 +838,22 @@ int readButtons() {
 void displayHomeScreen() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Home ");
-  lcd.write(0); // Home icon
+  lcd.write((uint8_t)0); // Home icon1
+  lcd.write((uint8_t)1); // Home icon2
+  lcd.print(" Home");
   lcd.setCursor(0, 1);
   // lcd.print("TT:");
   // lcd.print(paddedValue(targetTemperature));
   // lcd.print(" CH:");
   // lcd.print(paddedValue(coolHeight));
   // lcd.setCursor(7, 1);
-  lcd.print("D:");
+  lcd.print("D");
   lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
-  lcd.print(" P:");
+  lcd.print(" P");
   lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
-  lcd.print(" H:");
+  lcd.print(" H");
   lcd.print(paddedValue(readHeight(), 3));
-  lcd.print("  F:");
+  lcd.print(" F");
   lcd.print(paddedValue(readPressure(), 2));
 }
 
@@ -769,22 +867,22 @@ void displayProgramSelection() {
   lcd.print("Plastic Program");
 }
 
-
+//General Display for all programs
 void displayProgramStatus(String progName) {
   lcd.setCursor(0, 0);
   lcd.print(progName);
-  lcd.print("TT:");
+  lcd.print(" TT");
   lcd.print(paddedValue(pTargetTemperature, 2));
-  lcd.print(" CH:");
-  lcd.print(paddedValue(pCoolHeight, 2));
+  lcd.print(" CH");
+  lcd.print(paddedValue(pCoolHeight, 3));
   lcd.setCursor(0, 1);
-  lcd.print("D:");
+  lcd.print("D");
   lcd.print(paddedValue(readTemperature(DIE_ZONE), 2));
-  lcd.print(" P:");
+  lcd.print(" P");
   lcd.print(paddedValue(readTemperature(PUNCH_ZONE), 2));
-  lcd.print(" H:");
+  lcd.print(" H");
   lcd.print(paddedValue(readHeight(), 3));
-  lcd.print("  F:");
+  lcd.print(" F");
   lcd.print(paddedValue(readPressure(), 2));
 }
 
@@ -840,136 +938,161 @@ void displayPlasticPressingProgramStatus() {
 void displayAdjustingMode(Option option) {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Adjusting Mode");
+  lcd.print(paddedString("Adjusting Mode", 16));
   lcd.setCursor(0, 1);
 
   switch (option) {
     case P_TARGET_TEMP:
-      lcd.print("P Target Temp: ");
-      lcd.print(pTargetTemperature);
-      lcd.print(" ");
+      lcd.print(paddedString("P Target T", 11));
+      lcd.print(paddedValue(pTargetTemperature, 3));
+      
       break;
     case F_TARGET_TEMP:
-      lcd.print("F Target Temp: ");
-      lcd.print(fTargetTemperature);
-      lcd.print(" ");
+      lcd.print(paddedString("F Target T", 11));
+      lcd.print(paddedValue(fTargetTemperature, 3));
+     
       break;
     case F_HEAT_TIME:
-      lcd.print("F Heat Time: ");
-      lcd.print(fHeatTime);
-      lcd.print(" ");
+      lcd.print(paddedString("F Heat t", 11));
+      lcd.print(paddedValue(fHeatTime, 3));
+      
       break;
     case HEIGHT_CALIBRATION:
-      lcd.print("Height Calib.: ");
-      lcd.print(heightCalibration);
-      lcd.print(" ");
+      lcd.print(paddedString("Height Calib", 11));
+      lcd.print(paddedValue(heightCalibration, 3));
+    
       break;
     case P_COOLING_HEIGHT:
-      lcd.print("P Cool Height: ");
-      lcd.print(pCoolHeight);
-      lcd.print(" ");
+      lcd.print(paddedString("P Cool Ht", 11));
+      lcd.print(paddedValue(pCoolHeight, 3));
+     
       break;
     case F_COOLING_HEIGHT:
-      lcd.print("F Cool Height: ");
-      lcd.print(fCoolHeight);
-      lcd.print(" ");
+      lcd.print(paddedString("F Cool Ht", 11));
+      lcd.print(paddedValue(fCoolHeight, 3));
+     
       break;
     case COOL_TIME:
-      lcd.print("Cool Time: ");
-      lcd.print(CoolTime);
-      lcd.print(" ");
+      lcd.print(paddedString("Cool Time", 11));
+      lcd.print(paddedValue(CoolTime, 3));
+   
       break;
     case COOL_TARGET_TEMP:
-      lcd.print("Cool Target: ");
-      lcd.print(coolTargetTemp);
-      lcd.print(" ");
+      lcd.print(paddedString("Cool TarT", 11));
+      lcd.print(paddedValue(coolTargetTemp, 3));
+      
       break;
     case P_PRESSURE_TARGET:
-      lcd.print("P Pressure: ");
-      lcd.print(pPressureTarget);
-      lcd.print(" ");
+      lcd.print(paddedString("P TargetPr", 11));
+      lcd.print(paddedValue(pPressureTarget, 3));
+
       break;
     case F_PRESSURE_TARGET:
-      lcd.print("F Pressure: ");
-      lcd.print(fPressureTarget);
-      lcd.print(" ");
+      lcd.print(paddedString("F TPr", 11));
+      lcd.print(paddedValue(fPressureTarget, 3));
+ 
       break;
     case PRESSURE_RANGE:
-      lcd.print("Pressure Range: ");
-      lcd.print(pressureRange);
-      lcd.print(" ");
+      lcd.print(paddedString("Pr Range", 11));
+      lcd.print(paddedValue(pressureRange, 3));
+ 
+      break;
+      case PRESSURE_CALIBRATION:
+      lcd.print(paddedString("Pr Range", 11));
+      lcd.print(paddedValue(PressureCalibration, 3));
+ 
       break;
   }
 }
 
 
 void displaySettingsPage(Option selectedOption) {
-  lcd.clear();
+  
   lcd.setCursor(0, 0);
-  lcd.print("Settings");
-
-  lcd.setCursor(0, 1);
 
   switch (selectedOption) {
     case P_TARGET_TEMP:
-      lcd.print("> P Target Temp:");
-      lcd.setCursor(0, 2);
-      lcd.print("  F Target Temp:");
+      lcd.print(paddedString("> P Target T", 13));
+      lcd.print(paddedValue(pTargetTemperature, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("  F Target T", 13));
+      lcd.print(paddedValue(fTargetTemperature, 3));
       break;
     case F_TARGET_TEMP:
-      lcd.print("  P Target Temp:");
-      lcd.setCursor(0, 2);
-      lcd.print("> F Target Temp:");
+      lcd.print(paddedString("  P Target T", 13));
+      lcd.print(paddedValue(pTargetTemperature, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("> F Target T", 13));
+      lcd.print(paddedValue(fTargetTemperature, 3));
       break;
     case F_HEAT_TIME:
-      lcd.print("> F Heat Time:");
-      lcd.setCursor(0, 2);
-      lcd.print("  Height Calib.:");
+      lcd.print(paddedString("> F Heat t", 13));
+      lcd.print(paddedValue(fHeatTime, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("  Ht Calib", 13));
+      lcd.print(paddedValue(heightCalibration, 3));
       break;
     case HEIGHT_CALIBRATION:
-      lcd.print("  F Heat Time:");
-      lcd.setCursor(0, 2);
-      lcd.print("> Height Calib.:");
+      lcd.print(paddedString("  F Heat t", 13));
+      lcd.print(paddedValue(fHeatTime, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("> Ht Calib", 13));
+      lcd.print(paddedValue(heightCalibration, 3));
       break;
     case P_COOLING_HEIGHT:
-      lcd.print("> P Cooling Height:");
-      lcd.setCursor(0, 2);
-      lcd.print("  F Cooling Height:");
+      lcd.print(paddedString("> P Cool Ht", 13));
+      lcd.print(paddedValue(pCoolHeight, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("  F Cool Ht", 13));
+      lcd.print(paddedValue(fCoolHeight, 3));
       break;
     case F_COOLING_HEIGHT:
-      lcd.print("  P Cooling Height:");
-      lcd.setCursor(0, 2);
-      lcd.print("> F Cooling Height:");
+      lcd.print(paddedString("  P Cool Ht", 13));
+      lcd.print(paddedValue(pCoolHeight, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("> F Cool Ht", 13));
+      lcd.print(paddedValue(fCoolHeight, 3));
       break;
     case COOL_TIME:
-      lcd.print("> Cool Time:");
-      lcd.setCursor(0, 2);
-      lcd.print("  Cool Target Temp:");
+      lcd.print(paddedString("> Cool t", 13));
+      lcd.print(paddedValue(CoolTime, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("  Cool TarT", 13));
+      lcd.print(paddedValue(coolTargetTemp, 3));
       break;
     case COOL_TARGET_TEMP:
-      lcd.print("  Cool Time:");
-      lcd.setCursor(0, 2);
-      lcd.print("> Cool Target Temp:");
+      lcd.print(paddedString("  Cool Time", 13));
+      lcd.print(paddedValue(CoolTime, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("> Cool TarT", 13));
+      lcd.print(paddedValue(coolTargetTemp, 3));
       break;
     case P_PRESSURE_TARGET:
-      lcd.print("> P Pressure Target:");
-      lcd.setCursor(0, 2);
-      lcd.print("  F Pressure Target:");
+      lcd.print(paddedString("> P TargetPr", 13));
+      lcd.print(paddedValue(pPressureTarget, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("  F TargetPr", 13));
+      lcd.print(paddedValue(fPressureTarget, 3));
       break;
     case F_PRESSURE_TARGET:
-      lcd.print("  P Pressure Target:");
-      lcd.setCursor(0, 2);
-      lcd.print("> F Pressure Target:");
+      lcd.print(paddedString("  P TargetPr", 13));
+      lcd.print(paddedValue(pPressureTarget, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("> F TargetPr", 13));
+      lcd.print(paddedValue(fPressureTarget, 3));
       break;
     case PRESSURE_RANGE:
-      lcd.print("> Pressure Range:");
-      lcd.setCursor(0, 2);
-      lcd.print("  Pressure Calibration:");
+      lcd.print(paddedString("> Pr Range", 13));
+      lcd.print(paddedValue(pressureRange, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("  Pr Calib", 13));
       break;
       case PRESSURE_CALIBRATION:
-      lcd.print(" Pressure Range:");
-      lcd.setCursor(0, 2);
-      lcd.print(">  Pressure Calibration:");
+      lcd.print(paddedString("  Pr Range", 13));
+      lcd.print(paddedValue(pressureRange, 3));
+      lcd.setCursor(0, 1);
+      lcd.print(paddedString("> Pr Calib", 13));
+      lcd.print(paddedValue(PressureCalibration, 3));
       break;
   }
 
