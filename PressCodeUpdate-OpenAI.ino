@@ -1,9 +1,21 @@
+
+
+// New Code for running the Heated Press Control Box
+// The code structure and many sections were written by chatgpt
+// The rest was written and edited by Wesley Teerlink
+// DATE: 2023.07.18
+// Rev: A
+
+// Change notes:
+// added pressure reading and press control via pneumatic solenoid features.
+
+
 #include <Adafruit_RGBLCDShield.h>
 #include <utility/Adafruit_MCP23017.h>
 #include <SPI.h>
 #include <SD.h>
 
-
+// LCD object
 Adafruit_RGBLCDShield lcd = Adafruit_RGBLCDShield();
 Adafruit_MCP23017 mcp;
 
@@ -75,9 +87,6 @@ ProgramState currentState = HOME_SCREEN;
 HeatingState p_heatingState = HEATING_100;
 HeatingState f_heatingState = HEATING_100;
 
-// // LCD Shield Objects
-// Adafruit_RGBLCDShield lcd = Adafruit_RGBLCDShield();
-// Adafruit_MCP23017 mcp;
 
 // Sensor Pins
 const int punchSensorPin = A9;
@@ -88,12 +97,14 @@ const int pressurePin = A7;
 
 // SD card setup
 const int sdCardPin = 10;
-const String settingsFilePath = "/settings.txt";
+const String settingsFilePath = "/SETTINGS.txt";
 
-const String fabricIDListPath = "/Fabric_Id.txt";
-const String plasticIDListPath = "/Plastic_Id.txt";
 
-String filename = "test.csv";
+const String fabricIDListPath = "/FABRIC_ID.txt";
+const String plasticIDListPath = "/PLASTIC_ID.txt";
+const String DataLogsPath = "/DATALOGS/";
+
+const String filenamePath = "/PLASTICTEST.TXT";
 
 // Heating and Cooling Parameters
 int pTargetTemperature = 70;
@@ -107,17 +118,18 @@ int coolTargetTemp = 15;
 int pPressureTarget = 70;
 int fPressureTarget = 30;
 int pressureRange = 5;
-int PressureTarget = 30;
-int CoolHeight = 130;
-int CoolTargetReached = 0;
 int PressureCalibration = 70;  // this is units of 1/10 of 1 inch squared
 
+int PressureTarget = 30;
+int CoolHeight = 130;
 
-bool DataLogging = 0;           // a boolean to say whether of not data should be logged during this time.
-bool HeatBuzzerSounded = 0;     // Boolean to say if the heating buzzer has sounded yet
-bool CoolingStarted = 0;        // Boolean to say if the cooling begun yet
-bool PressingStarted = 0;       // Boolean to say if the pressing has begun yet
-bool CalibStarted = 0;          //Boolean to know if Calib program has started yet
+
+bool DataLogging = 0;        // a boolean to say whether of not data should be logged during this time.
+bool HeatBuzzerSounded = 0;  // Boolean to say if the heating buzzer has sounded yet
+bool CoolingStarted = 0;     // Boolean to say if the cooling begun yet
+bool PressingStarted = 0;    // Boolean to say if the pressing has begun yet
+bool CalibStarted = 0;       //Boolean to know if Calib program has started yet
+bool CoolTargetReached = 0;
 
 
 // Function Control Pins
@@ -135,11 +147,15 @@ const unsigned long coolingDelay = 1000;         // 1 second
 const unsigned long buzzerDuration = 3000;       // 3 seconds
 const unsigned long ButtonPressDelay = 200;      // 0.2 second
 const unsigned long DataLoggingInterval = 2000;  // 2 seconds
+const unsigned long displayInterval = 500;       // 0.5 seconds
+
 
 //Specific times
-unsigned long StartHeatTime = 0;  //first time the heaters turned on during a program
+unsigned long StartHeatTime = 0;    //first time the heaters turned on during a program
+unsigned long lastDisplayTime = 0;  //last time the display was updated
 
 // Make a custom Icons
+//
 byte homeIcon1[8] = {
   B00001,
   B00011,
@@ -248,6 +264,7 @@ unsigned long holdHeatStartTime = 0;
 unsigned long lastDataLogTime = 0;
 
 
+
 //setup and loop
 void setup() {
   // Initialize LCD Shield
@@ -265,6 +282,9 @@ void setup() {
 
   // Load settings from SD Card
   loadSettings();
+  //Ensure that we have the necessary Folders in the SD Card
+  SD.mkdir("DataLogs");
+
 
   lcd.createChar(0, homeIcon1);   //Left Home Icon
   lcd.createChar(1, homeIcon2);   // Right Home Icon
@@ -299,11 +319,11 @@ void loop() {
     handleCalibration();
   } else if (currentState == COOLING) {
     handleCooling();
-  } 
+  }
 
-  //This section is for collecting data points to the SD card during any given run
+  // This section is for collecting data points to the SD card during any given run
   // The data should only be collected ever 2 seconds
-  if (DataLogging == 1 && (millis() - lastDataLogTime) >= DataLoggingInterval) {
+  if (DataLogging && (millis() - lastDataLogTime) >= DataLoggingInterval) {
     // Collect sensor and binary data
     lastDataLogTime = millis();
     String data = "";
@@ -318,7 +338,7 @@ void loop() {
     data += String(digitalRead(pressPumpPin)) + ",";
 
     // Log the data to the SD card
-    logData(filename, data);
+    logData("PlasticTest.csv", data);
   }
 }
 
@@ -355,17 +375,21 @@ void handleSettingsScreen() {
     int button = readButtons();  // Read the button state as an integer
 
     if (button == UP_BUTTON) {
-      selectedOption = static_cast<Option>((selectedOption - 1) % NUM_OPTIONS);
+      selectedOption = static_cast<Option>((selectedOption +NUM_OPTIONS - 1) % NUM_OPTIONS);
       displaySettingsPage(selectedOption);
+      delay(ButtonPressDelay);
     } else if (button == DOWN_BUTTON) {
       selectedOption = static_cast<Option>((selectedOption + NUM_OPTIONS + 1) % NUM_OPTIONS);
       displaySettingsPage(selectedOption);
+      delay(ButtonPressDelay);
     } else if (button == LEFT_BUTTON) {
       adjustOptionValue(selectedOption, false);  // Decrease the value
       displayAdjustingMode(selectedOption);
+      delay(ButtonPressDelay);
     } else if (button == RIGHT_BUTTON) {
       adjustOptionValue(selectedOption, true);  // Increase the value
       displayAdjustingMode(selectedOption);
+      delay(ButtonPressDelay);
     } else if (button == SELECT_BUTTON) {
       saveSettings();  // Save the updated settings to the SD card
       delay(ButtonPressDelay);
@@ -393,7 +417,7 @@ void handleProgramSelection() {
     lcd.setCursor(0, 1);
 
     if (button == UP_BUTTON) {
-      
+
       programSelection = static_cast<SelectablePrograms>((programSelection + NUM_PROGS - 1) % NUM_PROGS);
 
       // if (programSelection == PROGRAM_SELECTION || programSelection == HOME_SCREEN) {
@@ -410,31 +434,47 @@ void handleProgramSelection() {
       //   programSelection = static_cast<SelectablePrograms>((programSelection + NUM_PROGS + 1) % NUM_PROGS);
       // }
       displayProgramSelection(programSelection);
-    } else if (button == LEFT_BUTTON){
+    } else if (button == LEFT_BUTTON) {
       delay(ButtonPressDelay);
       cancelProgram();
 
     } else if (button == SELECT_BUTTON) {
-    delay(ButtonPressDelay);
+      delay(ButtonPressDelay);
 
-    switch (programSelection){
-      case PLASTIC:
-        currentState = PLASTIC_PROGRAM;
-        break;
-      case FABRIC:
-        currentState = FABRIC_PROGRAM;
-        break;
-      case SETTINGS:
-        currentState = SETTINGS_SCREEN;
-        break;
-      case CALIB:
-        currentState = CALIBRATION;
-        break;
-      case COOL:
-        currentState = COOLING;
-        break;
-    }
-    break;
+      switch (programSelection) {
+        case PLASTIC:
+          currentState = PLASTIC_PROGRAM;
+          
+          DataLogging = 1; //Start Data Logging
+          // filenamePath = String("/PLASTICTEST.TXT");
+
+          //Special Pause For Troubleshooting SD problems
+          // while (true) {
+          //   lcd.print(filenamePath);
+          //   delay(500);
+
+          //   int button = readButtons();
+
+          //   if (button == SELECT_BUTTON){
+          //     break;
+          //   }
+          // }
+          // writeDataHeaders();
+          break;
+        case FABRIC:
+          currentState = FABRIC_PROGRAM;
+          break;
+        case SETTINGS:
+          currentState = SETTINGS_SCREEN;
+          break;
+        case CALIB:
+          currentState = CALIBRATION;
+          break;
+        case COOL:
+          currentState = COOLING;
+          break;
+      }
+      break;
     }
   }
 }
@@ -482,7 +522,11 @@ void handlePlasticProgram() {
       // Set the target pressure and cool height
       PressureTarget = pPressureTarget;
       CoolHeight = pCoolHeight;
-      displayProgramStatus(2);
+      if (millis() - lastDisplayTime >= displayInterval) {
+        lastDisplayTime = millis();
+        displayProgramStatus(2);  // Only update the sensor readings
+      }
+
       return;
     }
   }
@@ -500,7 +544,11 @@ void handlePlasticProgram() {
   }
 
   // Display Plastic Program status
-  displayProgramStatus(1);
+  if (millis() - lastDisplayTime >= displayInterval) {
+    lastDisplayTime = millis();
+    displayProgramStatus(1);  // Only update the sensor readings
+  }
+
 
   // Check if left button is pressed to cancel the program
 
@@ -524,7 +572,11 @@ void handlePlasticProgram() {
     // Set the target pressure and cool height
     PressureTarget = pPressureTarget;
     CoolHeight = pCoolHeight;
-    displayProgramStatus(2);
+    if (millis() - lastDisplayTime >= displayInterval) {
+      lastDisplayTime = millis();
+      displayProgramStatus(2);  // Only update the sensor readings
+    }
+
     return;
   }
   //######################
@@ -548,7 +600,11 @@ void handleFabricProgram() {
 
       // Proceed to Pressing program
       currentState = FABRIC_PRESSING_PROGRAM;
-      displayProgramStatus(5);
+      if (millis() - lastDisplayTime >= displayInterval) {
+        lastDisplayTime = millis();
+        displayProgramStatus(5);  // Only update the sensor readings
+      }
+
       return;
     }
   }
@@ -564,7 +620,11 @@ void handleFabricProgram() {
   }
 
   // Display Fabric Program status
-  displayProgramStatus(5);
+  if (millis() - lastDisplayTime >= displayInterval) {
+    lastDisplayTime = millis();
+    displayProgramStatus(5);  // Only update the sensor readings
+  }
+
 
   // Check if left button is pressed to cancel the program
 
@@ -697,12 +757,22 @@ void handlePlasticPressingProgram() {
   //Select Appropriate Display
   if (PressingStarted || CoolingStarted) {
     if (CoolingStarted) {
-      displayProgramStatus(4);
+      if (millis() - lastDisplayTime >= displayInterval) {
+        lastDisplayTime = millis();
+        displayProgramStatus(4);  // Only update the sensor readings
+      }
+
     } else {
-      displayProgramStatus(3);
+      if (millis() - lastDisplayTime >= displayInterval) {
+        lastDisplayTime = millis();
+        displayProgramStatus(3);  // Only update the sensor readings
+      }
     }
   } else {
-    displayProgramStatus(2);
+    if (millis() - lastDisplayTime >= displayInterval) {
+      lastDisplayTime = millis();
+      displayProgramStatus(2);  // Only update the sensor readings
+    }
   }
 }
 
@@ -751,8 +821,13 @@ void handleFabricPressingProgram() {
     }
   }
 
+
   // Display Pressing Program status
-  displayProgramStatus(7);
+  if (millis() - lastDisplayTime >= displayInterval) {
+    lastDisplayTime = millis();
+    displayProgramStatus(7);  // Only update the sensor readings
+  }
+
 
   // Check if left button is pressed to cancel the program
 
@@ -768,22 +843,22 @@ void handleFabricPressingProgram() {
 }
 
 // Calibrate the pressure and height
-void handleCalibration(){
+void handleCalibration() {
   int button = readButtons();
 
-  if(button == SELECT_BUTTON){
+  if (button == SELECT_BUTTON) {
     heightCalibration = analogRead(heightSensorPin);
     //Something for Pressure Calibration if needed. We don't know if the drift is significant
     lcd.clear();
-    lcd.setCursor(0,0);
+    lcd.setCursor(0, 0);
     lcd.print("Calibration Set");
     delay(1000);
-  
+
     cancelProgram();
     return;
   }
 
-  if(button == LEFT_BUTTON){
+  if (button == LEFT_BUTTON) {
     //Return to Home and cancel
     delay(ButtonPressDelay);
     cancelProgram();
@@ -791,7 +866,6 @@ void handleCalibration(){
   }
 
   displayCalibration();
-
 }
 
 //Cooling Only. Function in case of cooling needed outside norma program
@@ -847,7 +921,10 @@ void handleCooling() {
     }
   }
 
-  displayProgramStatus(9);
+  if (millis() - lastDisplayTime >= displayInterval) {
+    lastDisplayTime = millis();
+    displayProgramStatus(9);  // Only update the sensor readings
+  }
 }
 
 
@@ -974,6 +1051,7 @@ void displayProgramStatus(int ProgID) {
   lcd.print(paddedValue(readHeight(), 3));
   lcd.print(" F");
   lcd.print(paddedValue(readPressure(), 2));
+
 }
 
 
@@ -1096,17 +1174,17 @@ void displaySettingsPage(Option selectedOption) {
       lcd.print(paddedValue(fCoolHeight, 3));
       break;
     case COOL_TIME:
-      lcd.print(paddedString("> Cool t", 13));
+      lcd.print(paddedString("> Cool time", 13));
       lcd.print(paddedValue(CoolTime, 3));
       lcd.setCursor(0, 1);
-      lcd.print(paddedString("  Cool TarT", 13));
+      lcd.print(paddedString("  Cool Temp", 13));
       lcd.print(paddedValue(coolTargetTemp, 3));
       break;
     case COOL_TARGET_TEMP:
-      lcd.print(paddedString("  Cool Time", 13));
+      lcd.print(paddedString("  Cool time", 13));
       lcd.print(paddedValue(CoolTime, 3));
       lcd.setCursor(0, 1);
-      lcd.print(paddedString("> Cool TarT", 13));
+      lcd.print(paddedString("> Cool Temp", 13));
       lcd.print(paddedValue(coolTargetTemp, 3));
       break;
     case P_PRESSURE_TARGET:
@@ -1144,9 +1222,9 @@ void displaySettingsPage(Option selectedOption) {
   // lcd.print("Press L/R to adjust");
 }
 
-void displayCalibration(){
+void displayCalibration() {
 
-  if (CalibStarted == 0){
+  if (CalibStarted == 0) {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.write((uint8_t)4);
@@ -1156,7 +1234,7 @@ void displayCalibration(){
     delay(ButtonPressDelay);
   }
 
-  lcd.setCursor(0,1);
+  lcd.setCursor(0, 1);
   lcd.print("Ht: ");
   lcd.print(paddedValue(readHeight(), 3));
   lcd.print(" Fr: ");
@@ -1231,7 +1309,7 @@ void controlHeater(Zone zone) {
 //Load the Settings saved to SD card
 void loadSettings() {
   // Open the settings file on the SD card
-  File settingsFile = SD.open("settings.txt");
+  File settingsFile = SD.open(settingsFilePath);
 
   // Check if the file opened successfully
   if (settingsFile) {
@@ -1269,8 +1347,11 @@ void loadSettings() {
           fPressureTarget = value.toInt();
         } else if (key == "Pressure_Range") {
           pressureRange = value.toInt();
+        } else if (key == "Pressure_Calibration") {
+          PressureCalibration = value.toInt();
         }
       }
+      
     }
 
     // Close the settings file
@@ -1372,22 +1453,27 @@ void adjustOptionValue(Option option, bool increase) {
 
 //Save current Settings to the SD card
 void saveSettings() {
+  // Delete the old settings file if it exists
+  if (SD.exists(settingsFilePath)) {
+    SD.remove(settingsFilePath);
+  }
   // Open the settings file in write mode
   File settingsFile = SD.open(settingsFilePath, FILE_WRITE);
 
   if (settingsFile) {
     // Write the settings values to the file in the correct format
-    settingsFile.println("P_TARGET_TEMP=" + String(pTargetTemperature));
-    settingsFile.println("F_TARGET_TEMP=" + String(fTargetTemperature));
-    settingsFile.println("F_HEAT_TIME=" + String(fHeatTime));
-    settingsFile.println("HEIGHT_CALIBRATION=" + String(heightCalibration));
-    settingsFile.println("P_COOLING_HEIGHT=" + String(pCoolHeight));
-    settingsFile.println("F_COOLING_HEIGHT=" + String(fCoolHeight));
-    settingsFile.println("P_COOL_TIME=" + String(CoolTime));
-    settingsFile.println("COOL_TARGET_TEMP=" + String(coolTargetTemp));
-    settingsFile.println("P_PRESSURE_TARGET=" + String(pPressureTarget));
-    settingsFile.println("F_PRESSURE_TARGET=" + String(fPressureTarget));
-    settingsFile.println("PRESSURE_RANGE=" + String(pressureRange));
+    settingsFile.println("P_Target_Temp=" + String(pTargetTemperature));
+    settingsFile.println("F_Target_Temp=" + String(fTargetTemperature));
+    settingsFile.println("F_Heat_Time=" + String(fHeatTime));
+    settingsFile.println("Height_Calibration=" + String(heightCalibration));
+    settingsFile.println("P_Cooling_Height=" + String(pCoolHeight));
+    settingsFile.println("F_Cooling_Height=" + String(fCoolHeight));
+    settingsFile.println("P_Cool_Time=" + String(CoolTime));
+    settingsFile.println("Cool_Target_Temp=" + String(coolTargetTemp));
+    settingsFile.println("P_Pressure_Target=" + String(pPressureTarget));
+    settingsFile.println("F_Pressure_Target=" + String(fPressureTarget));
+    settingsFile.println("Pressure_Range=" + String(pressureRange));
+    settingsFile.println("Pressure_Calibration=" + String(pressureRange));
 
     // Close the settings file
     settingsFile.close();
@@ -1471,7 +1557,7 @@ float readHeight() {
 //Read pressure transducer value and convert to tenth of 1 ton force
 float readPressure() {
 
-  float pressure = (analogRead(pressurePin)/1023.0)* 15.70796327 ;  // Convert reading to pressure in in Tonnes
+  float pressure = (analogRead(pressurePin) / 1023.0) * 15.70796327;  // Convert reading to pressure in in Tonnes
 
   return pressure;
 }
@@ -1499,15 +1585,30 @@ int readButtons() {
 String createDataFilename(const String& programType) {
 
   // Generate the filename with a unique ID, program type, and timestamp
-  String filename = "PressData/";
-  filename += generateUniqueID(programType);  // Implement your logic to generate a unique ID
-  filename += "_" + programType + "_" + ".csv";
+  String newfilename = DataLogsPath;
+  newfilename += "/" + generateUniqueID(programType);  // Implement your logic to generate a unique ID
+  newfilename += "_" + programType + ".csv";
 
-  return filename;
+  //Special Pause For Troubleshooting SD problems
+    // while (true) {
+    //   lcd.setCursor(0,0);
+    //   lcd.print("New Filename");
+    //   lcd.setCursor(0,1);
+    //   lcd.print(paddedString(newfilename,19));
+    //   delay(500);
+
+    //   int button = readButtons();
+
+    //   if (button == SELECT_BUTTON){
+    //     break;
+    // } 
+    // } 
+
+  return newfilename;
 }
 
 //Generate a new ID for each new plastic or Fabric run
-int generateUniqueID(const String& programType) {
+String generateUniqueID(const String& programType) {
   String idListFilePath = programType == "fabric" ? fabricIDListPath : plasticIDListPath;
 
   // Check if the ID list file exists
@@ -1515,6 +1616,21 @@ int generateUniqueID(const String& programType) {
     // Create the ID list file if it doesn't exist
     File idListFile = SD.open(idListFilePath, FILE_WRITE);
     idListFile.close();
+
+  //Special Pause For Troubleshooting SD problems
+    // while (true) {
+    //   lcd.setCursor(0,0);
+    //   lcd.print("ID File Missing ");
+    //   lcd.setCursor(0,1);
+    //   lcd.print(paddedString(idListFilePath,16));
+    //   delay(500);
+
+    //   int button = readButtons();
+
+    //   if (button == SELECT_BUTTON){
+    //     break;
+    //   }
+    // }
   }
 
   // Read the ID list file
@@ -1525,6 +1641,7 @@ int generateUniqueID(const String& programType) {
       idListContent += idListFile.readStringUntil('\n');
     }
     idListFile.close();
+  
   }
 
   // Extract the last used ID from the ID list
@@ -1547,12 +1664,43 @@ int generateUniqueID(const String& programType) {
     updatedIDListFile.close();
   }
 
-  return newID;
+  //Special Pause For Troubleshooting SD problems
+  // while (true) {
+  //   lcd.setCursor(0,0);
+  //   lcd.print("New ID Value");
+  //   lcd.setCursor(0,1);
+  //   lcd.print(paddedValue(newID,16));
+  //   delay(500);
+
+  //   int button = readButtons();
+
+  //   if (button == SELECT_BUTTON){
+  //     break;
+  //   }
+  // }
+
+  //Special Pause For Troubleshooting SD problems
+  // while (true) {
+  //   lcd.setCursor(0,0);
+  //   lcd.print("ID File Read");
+  //   lcd.setCursor(0,1);
+  //   lcd.print(paddedValue(newID,16));
+  //   delay(500);
+
+  //   int button = readButtons();
+
+  //   if (button == SELECT_BUTTON){
+  //     break;
+  //   }
+  // }
+
+  // return String(newID);
+  return String("505");
 }
 
 //Log the Data
-void logData(const String& filename, const String& data) {
-  File dataFile = SD.open(filename, FILE_WRITE);
+void logData(String datafilename, String data) {
+  File dataFile = SD.open(datafilename, FILE_WRITE);
   if (dataFile) {
     dataFile.println(data);
     dataFile.close();
@@ -1563,4 +1711,64 @@ void logData(const String& filename, const String& data) {
     }
   }
 }
+
+void writeDataHeaders() {
+
+    // Delete the old file if it exists
+  if (SD.exists(filenamePath)) {
+    SD.remove(filenamePath);
+  }
+
+  // Open the file in write mode with O_CREAT flag to create the file if it doesn't exist
+  File dataFile = SD.open(filenamePath, FILE_WRITE);
+
+  //Special Pause For Troubleshooting SD problems
+  // while (true) {
+  //   lcd.setCursor(0,0);
+  //   lcd.print(paddedString("dataFile Name",16));
+  //   lcd.setCursor(0,1);
+  //   lcd.print(paddedString(filenamePath,16));
+  //   lcd.print(" ");
+  //   delay(500);
+
+  //   int button = readButtons();
+
+  //   if (button == SELECT_BUTTON){
+  //     break;
+  //   }
+  // }
+
+  if (dataFile) {
+    String data = "";
+    data += "time (ms),";
+    data += "Punch Temp (C),";
+    data += "Die Temp (C),";
+    data += "Pressure (Tons),";
+    data += "Height (mm/10),";
+    data += "Is Punch On?,";
+    data += "Is Die On?,";
+    data += "Is Cooling On?,";
+    data += "Is Pressure On?";
+    data += "\n"; // Add a newline after the header
+
+    // Write the header to the file
+    dataFile.print(data);
+
+    // Close the file
+    dataFile.close();
+
+    lcd.setCursor(0, 0);
+    lcd.print(paddedString("Wrote Header", 16));
+    delay(500);
+
+  } else {
+    // Failed to open the file
+    lcd.setCursor(0, 0);
+    lcd.print(paddedString("SD Error",16));
+    lcd.setCursor(0, 1);
+    lcd.print(paddedString("Wrt Header Fail", 16));
+    delay(1000);
+  }
+}
+
 
