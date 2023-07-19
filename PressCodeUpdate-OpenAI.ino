@@ -14,6 +14,7 @@
 #include <utility/Adafruit_MCP23017.h>
 #include <SPI.h>
 #include <SD.h>
+#include <string.h>
 
 // LCD object
 Adafruit_RGBLCDShield lcd = Adafruit_RGBLCDShield();
@@ -83,6 +84,16 @@ enum SelectablePrograms {
   NUM_PROGS
 };
 
+//the types of runs
+enum RunType {
+  SMALL_PLASTIC,
+  SMALL_FABRIC,
+  LARGE_PLASTIC,
+  LARGE_FABRIC
+};
+
+RunType currentRunType = SMALL_PLASTIC;
+
 ProgramState currentState = HOME_SCREEN;
 HeatingState p_heatingState = HEATING_100;
 HeatingState f_heatingState = HEATING_100;
@@ -100,11 +111,21 @@ const int sdCardPin = 10;
 const String settingsFilePath = "/SETTINGS.txt";
 
 
-const String fabricIDListPath = "/FABRIC_ID.txt";
-const String plasticIDListPath = "/PLASTIC_ID.txt";
-const String DataLogsPath = "/DATALOGS/";
+// const String fabricIDListPath = "/FABRIC_ID.txt";
+// const String plasticIDListPath = "/PLASTIC_ID.txt";
+const String SPDataLogsPath = "DATALOGS/";
+const String SFDataLogsPath = "DATALOGS/";
+const String LPDataLogsPath = "DATALOGS/";
+const String LFDataLogsPath = "DATALOGS/";
 
-const String filenamePath = "/PLASTICTEST.TXT";
+const String IDLogsPath = SPDataLogsPath + "IDLOGS.CSV";
+
+
+
+String filenamePath = "";
+String suggestedSize = "S";
+String suggestedStage = "P";
+int suggestedID = 0; // Default suggested ID value
 
 // Heating and Cooling Parameters
 int pTargetTemperature = 70;
@@ -130,6 +151,7 @@ bool CoolingStarted = 0;     // Boolean to say if the cooling begun yet
 bool PressingStarted = 0;    // Boolean to say if the pressing has begun yet
 bool CalibStarted = 0;       //Boolean to know if Calib program has started yet
 bool CoolTargetReached = 0;
+bool Overwrite = 0;           //Boolean for choosing to overwrite exisiting DataLog
 
 
 // Function Control Pins
@@ -273,6 +295,27 @@ void setup() {
 
   // Initialize SD Card
   SD.begin(sdCardPin);
+  if (!SD.begin(sdCardPin)) {
+  Serial.println("SD card initialization failed!");
+  }
+
+    //Ensure that we have the necessary Folders in the SD Card
+  // SD.mkdir("/DATALOGS");
+  // SD.mkdir(SPDataLogsPath);
+  SD.mkdir("DATALOGS/SMALLFABRIC");
+  // SD.mkdir("DATALOGS/LARGE_PLASTIC");
+  // SD.mkdir("DATALOGS/LARGE_FABRIC");
+
+//   if (!SD.mkdir("DATALOGS/SMALL_PLASTIC")) {
+//   Serial.println("Error creating SMALL_PLASTIC directory!");
+// }
+
+// Repeat for other sub-directories
+
+
+
+  //DebugMode using Serial monitor
+  Serial.begin(9600);
 
   // Initialize Pins
   pinMode(heaterPunchPin, OUTPUT);
@@ -282,9 +325,6 @@ void setup() {
 
   // Load settings from SD Card
   loadSettings();
-  //Ensure that we have the necessary Folders in the SD Card
-  SD.mkdir("DataLogs");
-
 
   lcd.createChar(0, homeIcon1);   //Left Home Icon
   lcd.createChar(1, homeIcon2);   // Right Home Icon
@@ -338,7 +378,7 @@ void loop() {
     data += String(digitalRead(pressPumpPin)) + ",";
 
     // Log the data to the SD card
-    logData("PlasticTest.csv", data);
+    logData(filenamePath, data);
   }
 }
 
@@ -444,22 +484,86 @@ void handleProgramSelection() {
       switch (programSelection) {
         case PLASTIC:
           currentState = PLASTIC_PROGRAM;
+          currentRunType = SMALL_PLASTIC;
+          suggestedID = getNextSequentialID(currentRunType);
+
+          while(true){
+            displayIDSelection(suggestedID,suggestedSize,suggestedStage);
+
+            int button = readButtons();
+
+            if (button == UP_BUTTON) {
+              suggestedID++;
+              delay(ButtonPressDelay);
+
+            } else if (button == DOWN_BUTTON) {
+              suggestedID--;
+              delay(ButtonPressDelay);
+
+            } else if (button == LEFT_BUTTON) {
+              suggestedSize = "S";
+              currentRunType = SMALL_PLASTIC;
+              suggestedID = getNextSequentialID(currentRunType);
+              delay(ButtonPressDelay);
+
+            } else if (button == RIGHT_BUTTON) {
+              suggestedSize = "L";
+              currentRunType = LARGE_PLASTIC;
+              suggestedID = getNextSequentialID(currentRunType);
+              delay(ButtonPressDelay);
+
+            } else if( button == SELECT_BUTTON){
+              delay(ButtonPressDelay);
+              if (checkID(currentRunType)){
+                break;
+              } else if (Overwrite){
+                break;
+
+              } else {
+                lcd.setCursor(0,1);
+                int setmillis = millis();
+                while(true){
+                  int button = readButtons();
+
+                  if (button == SELECT_BUTTON){
+                    Overwrite = 1;
+                    break;
+                  } else if (button == LEFT_BUTTON){
+                    Overwrite = 0;
+                    break;
+                  }
+
+                  lcd.setCursor(0,1);
+                  if ((millis() - setmillis) % 4500 < 1500) {
+                    lcd.print(paddedString("ID in Use",16));
+                  } else if ((millis() - setmillis) % 4500 < 3000) {
+                    lcd.print(paddedString("SELECT to Cont",16));
+                  } else if ((millis() - setmillis) % 4500 > 3000) {
+                    lcd.print(paddedString("LEFT Change ID",16));
+                  }
+
+                }
+                
+              }
+              
+            }
+
+          }
+
+          filenamePath = createDataFilename(suggestedID);
+          // filenamePath = "DATALOGS/Test_1.csv";
+
+          Serial.println(filenamePath);
+
+          String entry = String(currentRunType == SMALL_PLASTIC ? "SMALL_PLASTIC" : "LARGE_PLASTIC") + "=" + String(suggestedID);
+
+
+          logData(IDLogsPath, entry);
+
+          writeDataHeaders(filenamePath);
           
           DataLogging = 1; //Start Data Logging
-          // filenamePath = String("/PLASTICTEST.TXT");
-
-          //Special Pause For Troubleshooting SD problems
-          // while (true) {
-          //   lcd.print(filenamePath);
-          //   delay(500);
-
-          //   int button = readButtons();
-
-          //   if (button == SELECT_BUTTON){
-          //     break;
-          //   }
-          // }
-          // writeDataHeaders();
+          Overwrite = 0;
           break;
         case FABRIC:
           currentState = FABRIC_PROGRAM;
@@ -1242,6 +1346,13 @@ void displayCalibration() {
 }
 
 
+void displayIDSelection(int nextRunID, String nextRunSize, String nextRunStage) {
+  lcd.setCursor(0, 0);
+  lcd.print(paddedString("Select run ID",16));
+  lcd.setCursor(0, 1);
+  lcd.print(nextRunSize + nextRunStage + paddedValue(nextRunID,14));
+}
+
 //#################################################
 // Special Functions
 
@@ -1504,6 +1615,7 @@ void cancelProgram() {
   PressingStarted = 0;
   CoolingStarted = 0;
   CalibStarted = 0;
+  Overwrite = 0;
 
 
   // Reset variables and state
@@ -1582,125 +1694,32 @@ int readButtons() {
 }
 
 // Function to create a file name for each new instance
-String createDataFilename(const String& programType) {
+String createDataFilename(int newID) {
+  String newFilename = "";
 
-  // Generate the filename with a unique ID, program type, and timestamp
-  String newfilename = DataLogsPath;
-  newfilename += "/" + generateUniqueID(programType);  // Implement your logic to generate a unique ID
-  newfilename += "_" + programType + ".csv";
+    switch (currentRunType){
+    case SMALL_PLASTIC:
+      newFilename = SPDataLogsPath + "SP_" + String(newID) + ".CSV";
+      break;
+    case SMALL_FABRIC:
+      newFilename = SFDataLogsPath + "SF_" + String(newID) + ".CSV";
+      break;
+    case LARGE_PLASTIC:
+      newFilename = LPDataLogsPath + "LP_" + String(newID) + ".CSV";
+      break;
+    case LARGE_FABRIC:
+      newFilename = LFDataLogsPath + "LF_" + String(newID) + ".CSV";
+      break;
 
-  //Special Pause For Troubleshooting SD problems
-    // while (true) {
-    //   lcd.setCursor(0,0);
-    //   lcd.print("New Filename");
-    //   lcd.setCursor(0,1);
-    //   lcd.print(paddedString(newfilename,19));
-    //   delay(500);
-
-    //   int button = readButtons();
-
-    //   if (button == SELECT_BUTTON){
-    //     break;
-    // } 
-    // } 
-
-  return newfilename;
+  }
+  return newFilename;
 }
 
-//Generate a new ID for each new plastic or Fabric run
-String generateUniqueID(const String& programType) {
-  String idListFilePath = programType == "fabric" ? fabricIDListPath : plasticIDListPath;
-
-  // Check if the ID list file exists
-  if (!SD.exists(idListFilePath)) {
-    // Create the ID list file if it doesn't exist
-    File idListFile = SD.open(idListFilePath, FILE_WRITE);
-    idListFile.close();
-
-  //Special Pause For Troubleshooting SD problems
-    // while (true) {
-    //   lcd.setCursor(0,0);
-    //   lcd.print("ID File Missing ");
-    //   lcd.setCursor(0,1);
-    //   lcd.print(paddedString(idListFilePath,16));
-    //   delay(500);
-
-    //   int button = readButtons();
-
-    //   if (button == SELECT_BUTTON){
-    //     break;
-    //   }
-    // }
-  }
-
-  // Read the ID list file
-  File idListFile = SD.open(idListFilePath);
-  String idListContent;
-  if (idListFile) {
-    while (idListFile.available()) {
-      idListContent += idListFile.readStringUntil('\n');
-    }
-    idListFile.close();
-  
-  }
-
-  // Extract the last used ID from the ID list
-  int lastID = 0;
-  int idIndex = idListContent.lastIndexOf('\n');
-  if (idIndex != -1) {
-    lastID = idListContent.substring(idIndex + 1).toInt();
-  }
-
-  // Increment the last used ID
-  int newID = lastID + 1;
-
-  // Append the new ID to the ID list
-  idListContent += String(newID) + '\n';
-
-  // Save the updated ID list to the file
-  File updatedIDListFile = SD.open(idListFilePath, FILE_WRITE);
-  if (updatedIDListFile) {
-    updatedIDListFile.print(idListContent);
-    updatedIDListFile.close();
-  }
-
-  //Special Pause For Troubleshooting SD problems
-  // while (true) {
-  //   lcd.setCursor(0,0);
-  //   lcd.print("New ID Value");
-  //   lcd.setCursor(0,1);
-  //   lcd.print(paddedValue(newID,16));
-  //   delay(500);
-
-  //   int button = readButtons();
-
-  //   if (button == SELECT_BUTTON){
-  //     break;
-  //   }
-  // }
-
-  //Special Pause For Troubleshooting SD problems
-  // while (true) {
-  //   lcd.setCursor(0,0);
-  //   lcd.print("ID File Read");
-  //   lcd.setCursor(0,1);
-  //   lcd.print(paddedValue(newID,16));
-  //   delay(500);
-
-  //   int button = readButtons();
-
-  //   if (button == SELECT_BUTTON){
-  //     break;
-  //   }
-  // }
-
-  // return String(newID);
-  return String("505");
-}
 
 //Log the Data
-void logData(String datafilename, String data) {
-  File dataFile = SD.open(datafilename, FILE_WRITE);
+
+void logData(const String& filename, String data) {
+  File dataFile = SD.open(String(filename), FILE_WRITE);
   if (dataFile) {
     dataFile.println(data);
     dataFile.close();
@@ -1712,31 +1731,13 @@ void logData(String datafilename, String data) {
   }
 }
 
-void writeDataHeaders() {
 
-    // Delete the old file if it exists
-  if (SD.exists(filenamePath)) {
-    SD.remove(filenamePath);
-  }
+void writeDataHeaders(const String& filename) {
+
 
   // Open the file in write mode with O_CREAT flag to create the file if it doesn't exist
-  File dataFile = SD.open(filenamePath, FILE_WRITE);
+  File dataFile = SD.open(filename, FILE_WRITE );
 
-  //Special Pause For Troubleshooting SD problems
-  // while (true) {
-  //   lcd.setCursor(0,0);
-  //   lcd.print(paddedString("dataFile Name",16));
-  //   lcd.setCursor(0,1);
-  //   lcd.print(paddedString(filenamePath,16));
-  //   lcd.print(" ");
-  //   delay(500);
-
-  //   int button = readButtons();
-
-  //   if (button == SELECT_BUTTON){
-  //     break;
-  //   }
-  // }
 
   if (dataFile) {
     String data = "";
@@ -1757,10 +1758,6 @@ void writeDataHeaders() {
     // Close the file
     dataFile.close();
 
-    lcd.setCursor(0, 0);
-    lcd.print(paddedString("Wrote Header", 16));
-    delay(500);
-
   } else {
     // Failed to open the file
     lcd.setCursor(0, 0);
@@ -1770,5 +1767,75 @@ void writeDataHeaders() {
     delay(1000);
   }
 }
+
+
+
+// Function to get the next sequential ID for a given type
+int getNextSequentialID(RunType runType) {
+  File idListFile = SD.open(IDLogsPath);
+
+  String idListContent;
+  if (idListFile) {
+    while (idListFile.available()) {
+      idListContent += idListFile.readStringUntil('\n');
+    }
+    idListFile.close();
+  }
+
+  // Extract the highest used ID from the ID list
+  int highestID = 0;
+  int idIndex = 0;
+  while (idIndex != -1) {
+    idIndex = idListContent.indexOf(runType, idIndex + 1);
+    if (idIndex != -1) {
+      int idStartIndex = idIndex + 1;
+      int idEndIndex = idListContent.indexOf('\n', idIndex);
+      int currentID = idListContent.substring(idStartIndex, idEndIndex).toInt();
+      if (currentID > highestID) {
+        highestID = currentID;
+      }
+    }
+  }
+
+  // Increment the highest used ID to get the next sequential ID
+  int newID = highestID + 1;
+
+  return newID;
+}
+
+// Function to get the next sequential ID for a given type
+bool checkID(RunType runType) {
+  
+  File idListFile = SD.open(IDLogsPath);
+  String idListContent;
+  if (idListFile) {
+    while (idListFile.available()) {
+      idListContent += idListFile.readStringUntil('\n');
+    }
+    idListFile.close();
+  }
+
+  // Extract the highest used ID from the ID list
+  int idIndex = 0;
+  while (idIndex != -1) {
+    idIndex = idListContent.indexOf(runType, idIndex + 1);
+    if (idIndex != -1) {
+      int idStartIndex = idIndex + 1;
+      int idEndIndex = idListContent.indexOf('\n', idIndex);
+      int currentID = idListContent.substring(idStartIndex, idEndIndex).toInt();
+      if (currentID == suggestedID) {
+        return 0; 
+      }
+    }
+  }
+
+  //IF the code makes it to here none of the other IDs matched Suggested and the ID is good to use.
+
+  return 1;
+}
+
+
+
+
 
 
